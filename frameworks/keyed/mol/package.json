@@ -1,0 +1,21 @@
+{
+  "name": "mol_perf_jsfb",
+  "version": "1.0.0",
+  "browser": "web.js",
+  "types": "web.d.ts",
+  "homepage": "https://github.com/hyoo-ru/mam_mol/tree/master/perf/jsfb",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hyoo-ru/mam_mol.git",
+    "directory": "perf/jsfb"
+  },
+  "scripts": {
+    "build-dev": "exit 0",
+    "build-prod": "exit 0"
+  },
+  "author": "Nin Jin",
+  "license": "MIT",
+  "js-framework-benchmark": {
+    "frameworkVersion": ""
+  }
+}
