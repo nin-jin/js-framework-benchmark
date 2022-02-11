@@ -474,7 +474,7 @@ var $;
                 this.reap();
         }
         reap() { }
-        track_promote() {
+        promote() {
             $mol_wire_auto?.track_next(this);
         }
         up() { }
@@ -635,7 +635,8 @@ var $;
         cursor = $mol_wire_cursor.stale;
         get pub_list() {
             const res = [];
-            for (let i = this.pub_from; i < this.sub_from; i += 2) {
+            const max = this.cursor >= 0 ? this.cursor : this.sub_from;
+            for (let i = this.pub_from; i < max; i += 2) {
                 res.push(this[i]);
             }
             return res;
@@ -646,11 +647,11 @@ var $;
             $mol_wire_auto = this;
             return sub;
         }
-        track_promote() {
+        promote() {
             if (this.cursor >= this.pub_from) {
                 $mol_fail(new Error('Circular subscription'));
             }
-            super.track_promote();
+            super.promote();
         }
         track_next(pub) {
             if (this.cursor < 0)
@@ -1014,22 +1015,22 @@ var $;
                     break reuse;
                 return existen;
             }
-            return new this(host, task, host + '.' + task.name + '(#)', ...args);
+            return new this(host, task, `${host?.[Symbol.toStringTag] ?? host}.${task.name}(#)`, ...args);
         }
         static persist(host, task, ...args) {
             const field = task.name + '()';
             let dict, key, existen, fiber;
             if (args.length) {
-                key = `${host}.${task.name}(${args.map(v => $mol_key(v)).join(',')})`;
-                dict = Object.getOwnPropertyDescriptor(host, field)?.value;
+                key = `${host?.[Symbol.toStringTag] ?? host}.${task.name}(${args.map(v => $mol_key(v)).join(',')})`;
+                dict = Object.getOwnPropertyDescriptor(host ?? task, field)?.value;
                 if (dict)
                     existen = dict.get(key);
                 else
-                    dict = host[field] = new Map();
+                    dict = (host ?? task)[field] = new Map();
             }
             else {
-                key = `${host}.${field}`;
-                existen = Object.getOwnPropertyDescriptor(host, field)?.value;
+                key = `${host?.[Symbol.toStringTag] ?? host}.${field}`;
+                existen = Object.getOwnPropertyDescriptor(host ?? task, field)?.value;
             }
             reuse: if (existen) {
                 if (!(existen instanceof $mol_wire_fiber))
@@ -1044,7 +1045,7 @@ var $;
             if (args.length)
                 dict.set(key, fiber);
             else
-                host[field] = fiber;
+                (host ?? task)[field] = fiber;
             return fiber;
         }
         static warm = true;
@@ -1098,9 +1099,10 @@ var $;
             return this.task.name + '()';
         }
         constructor(host, task, id, ...args) {
-            super(...args, undefined);
+            super(...args, undefined, undefined);
             this.host = host;
             this.task = task;
+            this.pop();
             this.pop();
             this.pub_from = this.sub_from = args.length;
             this[Symbol.toStringTag] = id;
@@ -1113,10 +1115,12 @@ var $;
             }
             if (this.persist) {
                 if (this.pub_from === 0) {
-                    this.host[this.field()] = null;
+                    ;
+                    (this.host ?? this.task)[this.field()] = null;
                 }
                 else {
-                    this.host[this.field()].delete(this[Symbol.toStringTag]);
+                    ;
+                    (this.host ?? this.task)[this.field()].delete(this[Symbol.toStringTag]);
                 }
             }
         }
@@ -1131,11 +1135,14 @@ var $;
         toString() {
             return this[Symbol.toStringTag];
         }
+        toJSON() {
+            return this[Symbol.toStringTag];
+        }
         [$mol_dev_format_head]() {
             return $mol_dev_format_div({}, $mol_dev_format_native(this), $mol_dev_format_shade(this.cursor.toString() + ' '), $mol_dev_format_auto(this.cache));
         }
         get $() {
-            return this.host['$'];
+            return (this.host ?? this.task)['$'];
         }
         affect(quant) {
             if (!super.affect(quant))
@@ -1241,7 +1248,7 @@ var $;
             if (!$mol_wire_fiber.warm) {
                 return this.result;
             }
-            this.track_promote();
+            this.promote();
             this.up();
             if (this.cache instanceof Error) {
                 return $mol_fail_hidden(this.cache);
@@ -1307,32 +1314,45 @@ var $;
 "use strict";
 var $;
 (function ($) {
-    $.$mol_wire_mem = (keys) => (host, field, descr) => {
-        if (!descr)
-            descr = Reflect.getOwnPropertyDescriptor(host, field);
-        const orig = descr?.value ?? host[field];
-        const sup = Reflect.getPrototypeOf(host);
-        if (typeof sup[field] === 'function') {
-            Object.defineProperty(orig, 'name', { value: sup[field].name });
-        }
-        function value(...args) {
-            let atom = $mol_wire_fiber.persist(this, orig, ...args.slice(0, keys));
-            if (args[keys] === undefined)
-                return atom.sync();
-            try {
-                atom.sync();
+    function $mol_wire_mem(keys) {
+        const wrap = $mol_wire_mem_func(keys);
+        return (host, field, descr) => {
+            if (!descr)
+                descr = Reflect.getOwnPropertyDescriptor(host, field);
+            const orig = descr?.value ?? host[field];
+            const sup = Reflect.getPrototypeOf(host);
+            if (typeof sup[field] === 'function') {
+                Object.defineProperty(orig, 'name', { value: sup[field].name });
             }
-            catch (error) {
-                $mol_fail_log(error);
-            }
-            return atom.recall(...args);
-        }
-        Object.defineProperty(value, 'name', { value: orig.name + ' ' });
-        Object.assign(value, { orig });
-        const descr2 = { ...descr, value };
-        Reflect.defineProperty(host, field, descr2);
-        return descr2;
-    };
+            const descr2 = {
+                ...descr,
+                value: wrap(orig)
+            };
+            Reflect.defineProperty(host, field, descr2);
+            return descr2;
+        };
+    }
+    $.$mol_wire_mem = $mol_wire_mem;
+    function $mol_wire_mem_func(keys) {
+        return (func) => {
+            const wrapper = function (...args) {
+                let atom = $mol_wire_fiber.persist(this, func, ...args.slice(0, keys));
+                if (args.length <= keys || args[keys] === undefined)
+                    return atom.sync();
+                try {
+                    atom.sync();
+                }
+                catch (error) {
+                    $mol_fail_log(error);
+                }
+                return atom.recall(...args);
+            };
+            Object.defineProperty(wrapper, 'name', { value: func.name + ' ' });
+            Object.assign(wrapper, { orig: func });
+            return wrapper;
+        };
+    }
+    $.$mol_wire_mem_func = $mol_wire_mem_func;
 })($ || ($ = {}));
 //mol/wire/mem/mem.ts
 ;
@@ -2706,7 +2726,7 @@ var $;
 "use strict";
 var $;
 (function ($) {
-    $mol_style_attach("mol/button/typed/typed.view.css", "[mol_button_typed] {\n\tjustify-content: center;\n\talign-content: center;\n\talign-items: center;\n\tpadding: var(--mol_gap_text);\n\tborder-radius: var(--mol_gap_round);\n\tgap: var(--mol_gap_space);\n}\n\n[mol_button_typed][disabled] {\n\tcolor: var(--mol_theme_text);\n\tpointer-events: none;\n}\n\n[mol_button_typed]:hover ,\n[mol_button_typed]:focus {\n\tcursor: pointer;\n\tbackground-color: var(--mol_theme_hover);\n}\n");
+    $mol_style_attach("mol/button/typed/typed.view.css", "[mol_button_typed] {\n\talign-content: center;\n\talign-items: center;\n\tpadding: var(--mol_gap_text);\n\tborder-radius: var(--mol_gap_round);\n\tgap: var(--mol_gap_space);\n}\n\n[mol_button_typed][disabled] {\n\tcolor: var(--mol_theme_text);\n\tpointer-events: none;\n}\n\n[mol_button_typed]:hover ,\n[mol_button_typed]:focus {\n\tcursor: pointer;\n\tbackground-color: var(--mol_theme_hover);\n}\n");
 })($ || ($ = {}));
 //mol/button/typed/-css/typed.view.css.ts
 ;
@@ -3678,7 +3698,7 @@ var $;
                 const ids = this.ids();
                 if (ids.length < 999)
                     return;
-                this.ids([ids[0], ids[998], ...ids.slice(2, 998), ids[1], ids[999]]);
+                this.ids([ids[0], ids[998], ...ids.slice(2, 998), ids[1], ...ids.slice(999)]);
             }
             auto() {
                 this.row_selected(this.selected());
